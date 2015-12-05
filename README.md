@@ -1,2 +1,2 @@
 # cshell
-Simple Unix shell in C
+Simple Unix shell in C.
