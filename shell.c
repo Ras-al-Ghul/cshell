@@ -39,6 +39,7 @@ struct alljobs{
 	int count;
 	int state;
 	int pid;
+	int stopped;
 	char name[MAXNUM];
 };
 struct alljobs jobsarray[MAXNUM * MAXOP];
@@ -56,7 +57,8 @@ struct bgroundexit{
 struct bgroundexit bgrounds[MAXNUM * MAXOP];
 //Done
 
-void childsignal_handler (int signum){//Handles exit message of background processes
+
+void signal_handler (int signum){//Handles exit message of background processes
   	int pid, status,i;
   	while (1){
       		pid = waitpid (WAIT_ANY, &status, WNOHANG);
@@ -66,64 +68,80 @@ void childsignal_handler (int signum){//Handles exit message of background proce
         	}
       		if (pid == 0)
         		break;
-		int tmpcount = 0;
+			int tmpcount = 0;
 
-		while(barray[tmpcount].pid != pid && tmpcount<(MAXNUM*MAXOP))
-			tmpcount++;
-		if(( tmpcount == (MAXNUM * MAXOP) ) || barray[tmpcount].pid != pid)
-			return;
+			while(barray[tmpcount].pid != pid && tmpcount<(MAXNUM*MAXOP))
+				tmpcount++;
+			if(( tmpcount == (MAXNUM * MAXOP) ) || barray[tmpcount].pid != pid)
+				return;
 
-		for(i=0 ; i<(MAXNUM * MAXOP) ; i++){
-			if(jobsarray[i].pid == pid){
-				jobsarray[i].state = 0;
-				break;
+			for(i=0 ; i<(MAXNUM * MAXOP) ; i++){
+				if(jobsarray[i].pid == pid){
+					jobsarray[i].state = 0;
+					break;
+				}
 			}
-		}
 
-		if(status == 0){
-			i=0;
-			while(bgrounds[i].used != 0 && i < (MAXNUM*MAXOP))
-				i++;
-			if(i == (MAXNUM * MAXOP))
-				return;
-			bgrounds[i].used = 1;
-			bgrounds[i].status = 1;
-			bgrounds[i].pid = pid;
-			strcpy(bgrounds[i].name,barray[tmpcount].name);
+			if(status == 0){
+				i=0;
+				while(bgrounds[i].used != 0 && i < (MAXNUM*MAXOP))
+					i++;
+				if(i == (MAXNUM * MAXOP))
+					return;
+				bgrounds[i].used = 1;
+				bgrounds[i].status = 1;
+				bgrounds[i].pid = pid;
+				strcpy(bgrounds[i].name,barray[tmpcount].name);
 
-		}
-		else{
-			i=0;
-			while(bgrounds[i].used != 0 && i < (MAXNUM*MAXOP))
-				i++;
-			if(i == (MAXNUM * MAXOP))
-				return;
-			bgrounds[i].used = 1;
-			bgrounds[i].status = status;
-			bgrounds[i].pid = pid;
-			strcpy(bgrounds[i].name,barray[tmpcount].name);
-		}
+			}
+			else{
+				i=0;
+				while(bgrounds[i].used != 0 && i < (MAXNUM*MAXOP))
+					i++;
+				if(i == (MAXNUM * MAXOP))
+					return;
+				bgrounds[i].used = 1;
+				bgrounds[i].status = status;
+				bgrounds[i].pid = pid;
+				strcpy(bgrounds[i].name,barray[tmpcount].name);
+			}
+
+			if(pid!=-1&&pid!=0)
+			{
+				if(WIFEXITED(status))				
+				{
+					int i;
+					for(i=0;i<(MAXNUM*MAXOP);i++){
+						if(jobsarray[i].pid == pid){
+								fprintf(stdout,"%s with pid %d exited normally\n",jobsarray[i].name,jobsarray[i].pid);
+								jobsarray[i].state = 0;
+							}
+					}
+				}
+				else if(WIFSIGNALED(status))
+				{
+					int i;
+					for(i=0;i<(MAXNUM*MAXOP);i++){
+						if(jobsarray[i].pid == pid){
+								fprintf(stdout,"%s with pid %d signalled to exit\n",jobsarray[i].name,jobsarray[i].pid);
+								jobsarray[i].state = 0;
+							}
+					}
+				}
+				else if(WIFEXITED(status))
+				{
+					int i;
+					for(i=0;i<(MAXNUM*MAXOP);i++){
+						if(jobsarray[i].pid == pid){
+								fprintf(stdout,"%s with pid %d exited normally\n",jobsarray[i].name,jobsarray[i].pid);
+								jobsarray[i].state = 0;
+							}
+					}
+				}
+			}
 
 
-    	}
-	return;
-}
-
-void stopsignal_handler(int signum){
-	//Handles Ctrl + Z
-	if(fpid == 0 || fpid == shell_pgid)		//To handle special first time segmentation fault
-		return;
-
-	//Store job details in jobsarray
-	strcpy(jobsarray[jobsarraycnt].name,fname);
-	jobsarray[jobsarraycnt].pid = fpid;
-	jobsarray[jobsarraycnt++].state = 1;
-	//Storing done
-
-	strcpy(barray[barraycnt].name, fname);
-	barray[barraycnt++].pid = fpid;
-	kill(fpid,SIGTSTP);		//Send stop signal
-
+    }
 	return;
 }
 
@@ -139,13 +157,11 @@ void init_shell (){
         		kill (- shell_pgid, SIGTTIN);
 
       		/* Ignore interactive and job-control signals.  */
-      		signal (SIGINT, SIG_IGN);
-      		signal (SIGQUIT, SIG_IGN);
-      		signal (SIGTSTP, stopsignal_handler);
-      		signal (SIGTTIN, SIG_IGN);
-      		signal (SIGTTOU, SIG_IGN);
-			signal (SIGCHLD, childsignal_handler);
-			signal (SIGCONT, SIG_DFL);
+		    signal (SIGINT, SIG_IGN);
+			signal (SIGTSTP, SIG_IGN);
+			signal (SIGQUIT, SIG_IGN);
+			signal (SIGTTIN, SIG_IGN);
+			signal (SIGTTOU, SIG_IGN);
 
       		/* Put ourselves in our own process group.  */
       		shell_pgid = getpid ();
@@ -493,22 +509,17 @@ int executeCommand(char *cmdarr[MAXCMD][MAXOP],int i,int flag, pid_t shellpid){
 			}
 		}
 
-		pid_t pid = getpid ();
-		pid_t pgid = getpgid (pid);
-      		if (flag) {
-			pgid = pid;	//Set group id to pid if a background process (Create new group)
-		}
-      		setpgid (pid, pgid);
-      		if (!flag)
-        		tcsetpgrp (shell_terminal, pgid);	//Set group id to shell's group id if a foreground process
+      		setpgid(getpid(),getpid());		//Create process group
+      		if(!flag)
+				tcsetpgrp(shell_terminal,getpid());		//If foreground process, give it terminal control
 
+			//Signals
 			signal (SIGINT, SIG_DFL);
-      		signal (SIGQUIT, SIG_DFL);
-      		signal (SIGTSTP, stopsignal_handler);
-      		signal (SIGTTIN, SIG_DFL);
-      		signal (SIGTTOU, SIG_DFL);
-      		signal (SIGCHLD, SIG_DFL);
-			signal (SIGCONT, SIG_DFL);
+			signal (SIGQUIT, SIG_DFL);
+			signal (SIGTSTP, SIG_DFL);
+			signal (SIGTTIN, SIG_DFL);
+			signal (SIGTTOU, SIG_DFL);
+			signal (SIGCHLD, SIG_DFL);
 	}
 
 
@@ -521,6 +532,9 @@ void execoverkill(){	//Kills all background processes
 		if(jobsarray[i].state == 1){
 			jobsarray[i].state = 0;
 			kill(jobsarray[i].pid,SIGKILL);
+			if(jobsarray[i].stopped == 1){
+				printf("%s with pid %d killed\n",jobsarray[i].name,jobsarray[i].pid);
+			}
 		}
 	}
 	return;
@@ -560,11 +574,13 @@ void execfg(char *cmdarr[MAXCMD][MAXOP],int i){		//Brings the specified backgrou
 				jobsarray[j].state = 0;
 				fpid = temppid;
 
+
+
 				int temppgid=getpgid(temppid);
-				setpgid(temppid,shell_pgid);
+				
 				tcsetpgrp(shell_terminal,temppgid);
 
-				kill(temppid,SIGCONT);
+				killpg(temppgid,SIGCONT);
 
 				int status;
 				do{
@@ -583,9 +599,18 @@ void execfg(char *cmdarr[MAXCMD][MAXOP],int i){		//Brings the specified backgrou
 						break;
             				}
 					else if (WIFSTOPPED(status)) {
-                				printf("\nstopped by signal %d\n", WSTOPSIG(status));
+        				printf("\nstopped by signal %d\n", WSTOPSIG(status));
+        				if(WSTOPSIG(status) == 19 || WSTOPSIG(status) == 20){
+									strcpy(jobsarray[jobsarraycnt].name,fname);
+									jobsarray[jobsarraycnt].pid = fpid;
+									jobsarray[jobsarraycnt].stopped = 1;
+									jobsarray[jobsarraycnt++].state = 1;
+								}
+        						printf("\nstopped by signal %d\n", WSTOPSIG(status));
+        						if(WSTOPSIG(status) == 22)
+        							kill(fpid,SIGKILL);
 						break;
-            				}
+            		}
 					else if (WIFCONTINUED(status)) {
                 				printf("continued\n");
             				}
@@ -622,11 +647,16 @@ void execkjob(char *cmdarr[MAXCMD][MAXOP],int i){		//Sends a specified signal to
 			execfg(cmdarr,i);
 			return;
 		}
-		int i;
-		for(i = 0 ; i < (MAXNUM*MAXOP) ; i++){
-			if(jobsarray[i].pid == temppid){
-				jobsarray[i].state = 0;
-				break;
+		if(tempsig == 9){
+			int i;
+			for(i = 0 ; i < (MAXNUM*MAXOP) ; i++){
+				if(jobsarray[i].pid == temppid){
+					jobsarray[i].state = 0;
+					if(jobsarray[i].stopped == 1)
+						printf("%s with pid %d killed\n",jobsarray[i].name,jobsarray[i].pid);
+			
+					break;
+				}
 			}
 		}
 	}
@@ -811,10 +841,10 @@ int pipesexecute(char *cmdarr[MAXCMD][MAXOP],char *pipecmdarr[MAXCMD][MAXCMD][MA
 			/*set the signal of child to default*/
 			signal (SIGINT, SIG_DFL);
 			signal (SIGQUIT, SIG_DFL);
-			signal (SIGTSTP, stopsignal_handler);
+			signal (SIGTSTP, SIG_DFL);
 			signal (SIGTTIN, SIG_DFL);
 			signal (SIGTTOU, SIG_DFL);
-			signal (SIGCHLD, childsignal_handler);
+			signal (SIGCHLD, SIG_DFL);
 
 			if(strcmp(outfile,"\0") != 0 && pipecmdarr[ii][j+1][0] == NULL){					//if there is an outfile	
 				if(outretval == 1){
@@ -949,6 +979,11 @@ int main(int argc, char *argv[]){
 
 	while(1){
 		
+		if(signal(SIGINT,signal_handler)==SIG_ERR)
+			perror("Signal not caught!!");
+		if(signal(SIGCHLD,signal_handler)==SIG_ERR)
+			perror("Signal not caught!!");
+
 		for(i=0;i<MAXCMD;i++)
 			numofpipes[i] = 0;
 
@@ -959,10 +994,12 @@ int main(int argc, char *argv[]){
 			if(bgrounds[i].used == 0)
 				continue;
 			bgrounds[i].used = 0;
-			if(bgrounds[i].status == 1)
-				printf("Process %s with pid %d terminated normally\n",bgrounds[i].name,bgrounds[i].pid);
-			else
-				printf("Process %s with pid %d terminated with status %d\n",bgrounds[i].name,bgrounds[i].pid,bgrounds[i].status);
+			if(bgrounds[i].status == 1){
+				//printf("Process %s with pid %d terminated normally\n",bgrounds[i].name,bgrounds[i].pid);
+			}
+			else{
+				//printf("Process %s with pid %d terminated with status %d\n",bgrounds[i].name,bgrounds[i].pid,bgrounds[i].status);
+			}
 		}
 
 		//Renitializing background process array
@@ -1183,8 +1220,12 @@ int main(int argc, char *argv[]){
 						//Storing done
 					}
 					else{//Wait for foreground process to complete
+						
+
 						fpid = pid;	//Store child pid of foreground process in global variable
 						strcpy(fname,cmdarr[i][0]);	//Store name of foreground process
+
+						tcsetpgrp(shell_terminal,fpid);
 
 						do{
 							w = waitpid(pid, &status, WUNTRACED | WCONTINUED);
@@ -1202,7 +1243,15 @@ int main(int argc, char *argv[]){
 								break;
             						}
 							else if (WIFSTOPPED(status)) {
+										if(WSTOPSIG(status) == 19 || WSTOPSIG(status) == 20){
+											strcpy(jobsarray[jobsarraycnt].name,fname);
+											jobsarray[jobsarraycnt].pid = fpid;
+											jobsarray[jobsarraycnt].stopped = 1;
+											jobsarray[jobsarraycnt++].state = 1;
+										}
                 						printf("\nstopped by signal %d\n", WSTOPSIG(status));
+                						if(WSTOPSIG(status) == 22)
+                							kill(fpid,SIGKILL);
 								break;
             						}
 							else if (WIFCONTINUED(status)) {
